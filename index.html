@@ -426,7 +426,7 @@ document.getElementById('downloadBtn').addEventListener('click', ()=>{
 document.getElementById('mailBtn').addEventListener('click', ()=>{
   const roles = ['estudiante','tutor','coordinacion'];
   const done = roles.filter(r => document.querySelector(`[data-sigcell="${r}"]`).getAttribute('data-signed')==='true').length;
-  const tutorCorreo = fieldValue('sig_tutor_correo') || fieldValue('est_correo');
+  const tutorCorreo = 'jsanabria@usbbog.edu.co';
   const asunto = encodeURIComponent(`Acta ${document.getElementById('actaNum').value} — ${fieldValue('est_nombre')}`);
   const cuerpo = encodeURIComponent(
 `Hola,
