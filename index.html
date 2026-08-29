@@ -90,6 +90,25 @@
   }
   .modal-actions{display:flex; gap:8px; margin-top:14px; justify-content:flex-end;}
 
+  .info-banner{
+    max-width:850px; margin:14px auto 0; background:#fff4e0; border:1px solid var(--orange);
+    border-radius:4px; padding:10px 16px; font-size:12.5px; color:#5a3d10; line-height:1.5;
+  }
+  .info-banner b{color:#8a4f00;}
+  @media print{ .info-banner{display:none !important;} }
+  @media (max-width:640px){ .info-banner{margin:10px 12px 0; padding:8px 12px; font-size:11.5px;} }
+
+  .codigo-bar{
+    max-width:850px; margin:14px auto 0; background:#eef3f0; border:1px solid #2f6f4f;
+    border-radius:4px; padding:14px 18px; font-size:13px; color:#1e4530;
+    display:flex; flex-wrap:wrap; gap:10px 16px; align-items:center;
+  }
+  .codigo-bar input{padding:8px 10px; font-size:13.5px; border:1px solid #9bb8a8; border-radius:3px; width:180px;}
+  .codigo-bar .btn-sm{font-size:12.5px; padding:8px 14px; border-radius:3px; border:1px solid #2f6f4f; background:#2f6f4f; color:#fff; cursor:pointer; font-weight:600;}
+  .codigo-bar .estado-carga{font-size:12.5px; font-weight:600;}
+  @media print{ .codigo-bar{display:none !important;} }
+  @media (max-width:640px){ .codigo-bar{margin:10px 12px 0; padding:10px 12px; flex-direction:column; align-items:stretch;} .codigo-bar input{width:auto;} }
+
   @media print{
     .toolbar{display:none !important;}
     body{background:#fff;}
@@ -133,6 +152,17 @@
   </div>
 </div>
 
+<div class="info-banner">
+  ℹ️ Escribe tu <b>código de acta</b> (te lo dio tu profesor) y da clic en "Cargar acta". Vas a ver los datos ya llenos — solo debes revisarlos y firmar tu fila. No se puede editar la información una vez cargada.
+</div>
+
+<div class="codigo-bar">
+  <span>🔑 Código del acta:</span>
+  <input type="text" id="codigoInput" placeholder="Ej: 002-2026">
+  <button class="btn-sm" id="cargarCodigoBtn">Cargar acta</button>
+  <span class="estado-carga" id="estadoCarga"></span>
+</div>
+
 <div class="sheet" id="sheet">
 
   <table class="letterhead-table">
@@ -152,6 +182,10 @@
       <td class="side-cell" colspan="2">Documento impreso no controlado</td>
     </tr>
   </table>
+
+  <div id="lockNotice" style="display:none; background:#fdecea; border:1px solid #b23a2f; color:#7a2318; font-size:12px; padding:8px 12px; border-radius:3px; margin-bottom:12px;">
+    🔒 "Evidencia de la comunicación" y "Observaciones" están bloqueadas y no se pueden editar. Los demás campos vinieron de la hoja de registro — revísalos y corrige si algo quedó mal (nombre, número, fechas, etc.) antes de firmar.
+  </div>
 
   <table>
     <tr class="title-row">
@@ -311,11 +345,13 @@ document.getElementById('confirmSigBtn').addEventListener('click', async ()=>{
   sigs[activeRole] = {dataUrl, hash, timestamp};
 
   const cell = document.querySelector(`[data-sigcell="${activeRole}"]`);
-  cell.innerHTML = `<img src="${dataUrl}"><div class="sig-code">${hash.slice(0,20)}…</div>`;
+  cell.innerHTML = `<img src="${dataUrl}"><div class="sig-code">Guardando en la hoja...</div>`;
   cell.setAttribute('data-signed', 'true');
-
   overlay.classList.remove('open');
   updateSignStatus();
+
+  const ok = await guardarFirmaEnSheet(activeRole, dataUrl);
+  cell.querySelector('.sig-code').textContent = ok ? ('Guardado en la hoja · ' + hash.slice(0,16) + '…') : 'No se guardó en la hoja (revisa conexión)';
 });
 
 function updateSignStatus(){
@@ -347,7 +383,7 @@ document.getElementById('saveDraftBtn').addEventListener('click', ()=>{
   const styleTag = document.querySelector('style').outerHTML;
   const scriptTag = document.querySelector('script').outerHTML;
   const statusHtml = document.getElementById('signStatus').outerHTML;
-  const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Acta ${document.getElementById('actaNum').value} (borrador)</title>${styleTag}</head><body><div class="toolbar"><div class="t">Acta Individual · Asignación de Empresa y Tutor Académico — USB (borrador, sigue editable)</div><div class="actions"><button class="btn ghost" id="printBtn">Imprimir / Guardar PDF</button><button class="btn ghost" id="saveDraftBtn">Guardar borrador (para reenviar)</button><button class="btn ghost" id="downloadBtn">Descargar versión final</button><button class="btn" id="mailBtn">Enviar por correo</button></div></div><div class="sheet" id="sheet">${clone.innerHTML}</div>${scriptTag}</body></html>`;
+  const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Acta ${document.getElementById('actaNum').value} (borrador)</title>${styleTag}</head><body><div class="toolbar"><div class="t">Acta Individual · Asignación de Empresa y Tutor Académico — USB (borrador, sigue editable)</div><div class="actions"><button class="btn ghost" id="printBtn">Imprimir / Guardar PDF</button><button class="btn ghost" id="saveDraftBtn">Guardar borrador (para reenviar)</button><button class="btn ghost" id="downloadBtn">Descargar versión final</button><button class="btn" id="mailBtn">Enviar por correo</button></div></div><div class="info-banner">⚠️ <b>Este archivo es el que hay que reenviar por correo</b>, no un link. Cada quien debe pasar este mismo archivo (con los datos y firmas ya puestos) a la siguiente persona de la cadena.</div><div class="sheet" id="sheet">${clone.innerHTML}</div>${scriptTag}</body></html>`;
   const blob = new Blob([html], {type:'text/html'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -405,6 +441,125 @@ ${done < 3 ? 'Aún faltan firmas por completar: ' + roles.filter(r => document.q
 
 Saludos.`);
   window.location.href = `mailto:${tutorCorreo}?subject=${asunto}&body=${cuerpo}`;
+});
+
+// ---------- Conexión con Google Sheets (Apps Script) ----------
+const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbx-WLZ9glANugYjGcOe_MHIk4OohtXER7Vd4FPZ7VPZStxcU7YSnp73zLkVdQuHMiVtjA/exec';
+let currentCodigo = null;
+
+const CAMPO_MAP = {
+  NombreCompleto: 'est_nombre',
+  IDEstudiantil: 'est_id',
+  Programa: 'est_programa',
+  Nivel: 'est_nivel',
+  CorreoInstitucional: 'est_correo',
+  Celular: 'est_celular',
+  Empresa: 'emp_nombre',
+  TutorNombre: 'tutor_nombre',
+  FechaInicio: 'fecha_inicio',
+  FechaFin: 'fecha_fin',
+  Estado: 'estado',
+  Evidencia: 'evidencia',
+  Observaciones: 'observaciones'
+};
+const CAMPO_MAP_INVERSO = Object.fromEntries(Object.entries(CAMPO_MAP).map(([k,v])=>[v,k]));
+
+async function cargarPorCodigo(codigo){
+  const estado = document.getElementById('estadoCarga');
+  estado.textContent = 'Cargando...';
+  estado.style.color = '#1e4530';
+  try{
+    const res = await fetch(`${APPS_SCRIPT_URL}?codigo=${encodeURIComponent(codigo)}`);
+    const data = await res.json();
+    if(data.error){
+      estado.textContent = data.error;
+      estado.style.color = '#9c4b32';
+      return;
+    }
+    aplicarDatosSheet(data);
+    estado.textContent = '✓ Acta cargada: ' + data.NombreCompleto;
+    estado.style.color = '#2f6f4f';
+  }catch(err){
+    estado.textContent = 'No se pudo conectar con la hoja. Revisa tu conexión e intenta de nuevo.';
+    estado.style.color = '#9c4b32';
+  }
+}
+
+function aplicarDatosSheet(data){
+  Object.keys(CAMPO_MAP).forEach(sheetKey=>{
+    const el = document.querySelector(`[data-f="${CAMPO_MAP[sheetKey]}"]`);
+    if(el && data[sheetKey] !== undefined) el.value = data[sheetKey];
+  });
+  if(data.ActaNum) document.getElementById('actaNum').value = data.ActaNum;
+  currentCodigo = data.Codigo;
+
+  const roles = [
+    {id:'estudiante', img:'FirmaEstudianteImg'},
+    {id:'tutor', img:'FirmaTutorImg'},
+    {id:'coordinacion', img:'FirmaCoordImg'}
+  ];
+  roles.forEach(r=>{
+    if(data[r.img]){
+      const cell = document.querySelector(`[data-sigcell="${r.id}"]`);
+      cell.innerHTML = `<img src="${data[r.img]}"><div class="sig-code">Firmado ✓</div>`;
+      cell.setAttribute('data-signed','true');
+    }
+  });
+
+  bloquearCamposDeContenido();
+  updateSignStatus();
+}
+
+function bloquearCamposDeContenido(){
+  const camposSiempreBloqueados = ['evidencia', 'observaciones'];
+  document.querySelectorAll('[data-f]').forEach(el=>{
+    const campo = el.getAttribute('data-f');
+    el.disabled = camposSiempreBloqueados.includes(campo);
+  });
+  document.getElementById('lockNotice').style.display = 'block';
+}
+
+async function guardarFirmaEnSheet(role, dataUrl){
+  if(!currentCodigo){
+    alert('Primero carga el acta con un código antes de firmar, para que la firma se guarde en la hoja.');
+    return false;
+  }
+  // Junto con la firma, mandamos también cualquier corrección que el firmante haya hecho
+  // en los campos editables (evidencia y observaciones NUNCA se tocan aquí, están bloqueadas).
+  const camposActualizados = {};
+  Object.keys(CAMPO_MAP_INVERSO).forEach(dataF=>{
+    if(dataF === 'evidencia' || dataF === 'observaciones') return;
+    const el = document.querySelector(`[data-f="${dataF}"]`);
+    if(el) camposActualizados[CAMPO_MAP_INVERSO[dataF]] = el.value;
+  });
+
+  try{
+    await fetch(APPS_SCRIPT_URL, {
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({codigo: currentCodigo, role, firmaDataUrl: dataUrl, fields: camposActualizados})
+    });
+    return true;
+  }catch(err){
+    alert('La firma se guardó en pantalla, pero no se pudo enviar a la hoja de Google. Revisa tu conexión e intenta de nuevo (puedes volver a firmar).');
+    return false;
+  }
+}
+
+document.getElementById('cargarCodigoBtn').addEventListener('click', ()=>{
+  const codigo = document.getElementById('codigoInput').value.trim();
+  if(!codigo){ alert('Escribe un código de acta.'); return; }
+  cargarPorCodigo(codigo);
+});
+
+// Auto-load if the URL already carries a code (?codigo=XXX)
+window.addEventListener('DOMContentLoaded', ()=>{
+  const params = new URLSearchParams(window.location.search);
+  const codigoParam = params.get('codigo');
+  if(codigoParam){
+    document.getElementById('codigoInput').value = codigoParam;
+    cargarPorCodigo(codigoParam);
+  }
 });
 </script>
 </body>
