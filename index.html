@@ -89,6 +89,7 @@
     touch-action:none; cursor:crosshair;
   }
   .modal-actions{display:flex; gap:8px; margin-top:14px; justify-content:flex-end;}
+  .modo-btn.active{background:var(--orange); color:#fff; border-color:var(--orange);}
 
   .info-banner{
     max-width:850px; margin:14px auto 0; background:#fff4e0; border:1px solid var(--orange);
@@ -266,8 +267,13 @@
 <div class="modal-overlay" id="modalOverlay">
   <div class="modal">
     <h3 id="modalTitle">Firma</h3>
-    <p class="hint">Dibuja tu firma dentro del recuadro con el mouse o el dedo.</p>
+    <div class="modo-tabs" style="display:flex; gap:6px; margin-bottom:10px;">
+      <button class="btn ghost modo-btn active" id="modoDibujarBtn" style="flex:1; color:#333; border-color:#aaa; font-size:12.5px; padding:7px;">✍️ Dibujar</button>
+      <button class="btn ghost modo-btn" id="modoEscribirBtn" style="flex:1; color:#333; border-color:#aaa; font-size:12.5px; padding:7px;">⌨️ Escribir</button>
+    </div>
+    <p class="hint" id="modoHint">Dibuja tu firma dentro del recuadro con el mouse o el dedo.</p>
     <canvas id="sigPad"></canvas>
+    <input type="text" id="firmaTexto" placeholder="Escribe tu nombre completo" style="display:none; width:100%; box-sizing:border-box; padding:12px; font-size:22px; font-family:'Segoe Script','Brush Script MT',cursive; border:1.5px dashed #aaa; border-radius:3px; text-align:center;">
     <div class="modal-actions">
       <button class="btn ghost" id="clearSigBtn" style="color:#333; border-color:#aaa;">Limpiar</button>
       <button class="btn ghost" id="cancelSigBtn" style="color:#333; border-color:#aaa;">Cancelar</button>
@@ -294,7 +300,9 @@ async function sha256(text){
 const overlay = document.getElementById('modalOverlay');
 const canvas = document.getElementById('sigPad');
 const ctx = canvas.getContext('2d');
+const firmaTextoInput = document.getElementById('firmaTexto');
 let drawing=false, hasDrawn=false;
+let modoFirma = 'dibujar'; // 'dibujar' | 'escribir'
 
 function fitCanvas(){
   const rect = canvas.getBoundingClientRect();
@@ -321,6 +329,38 @@ canvas.addEventListener('touchstart', startDraw, {passive:false});
 canvas.addEventListener('touchmove', moveDraw, {passive:false});
 canvas.addEventListener('touchend', endDraw);
 
+function setModoFirma(modo){
+  modoFirma = modo;
+  document.getElementById('modoDibujarBtn').classList.toggle('active', modo==='dibujar');
+  document.getElementById('modoEscribirBtn').classList.toggle('active', modo==='escribir');
+  canvas.style.display = (modo==='dibujar') ? 'block' : 'none';
+  firmaTextoInput.style.display = (modo==='escribir') ? 'block' : 'none';
+  document.getElementById('modoHint').textContent = (modo==='dibujar')
+    ? 'Dibuja tu firma dentro del recuadro con el mouse o el dedo.'
+    : 'Escribe tu nombre completo — se usará como tu firma en letra cursiva.';
+  if(modo==='dibujar'){ setTimeout(()=>{ fitCanvas(); ctx.clearRect(0,0,canvas.width,canvas.height); hasDrawn=false; }, 20); }
+  else { firmaTextoInput.value=''; firmaTextoInput.focus(); }
+}
+document.getElementById('modoDibujarBtn').addEventListener('click', ()=> setModoFirma('dibujar'));
+document.getElementById('modoEscribirBtn').addEventListener('click', ()=> setModoFirma('escribir'));
+
+function generarImagenDeTexto(texto){
+  const tmp = document.createElement('canvas');
+  tmp.width = 700; tmp.height = 220;
+  const tctx = tmp.getContext('2d');
+  tctx.fillStyle = '#1a1a1a';
+  tctx.textAlign = 'center';
+  tctx.textBaseline = 'middle';
+  let fontSize = 64;
+  tctx.font = `${fontSize}px 'Segoe Script','Brush Script MT',cursive`;
+  while(tctx.measureText(texto).width > tmp.width - 40 && fontSize > 24){
+    fontSize -= 4;
+    tctx.font = `${fontSize}px 'Segoe Script','Brush Script MT',cursive`;
+  }
+  tctx.fillText(texto, tmp.width/2, tmp.height/2);
+  return tmp.toDataURL('image/png');
+}
+
 document.querySelectorAll('button[data-action="sign"]').forEach(btn=>{
   btn.addEventListener('click', ()=>{
     activeRole = btn.getAttribute('data-role-id');
@@ -328,12 +368,15 @@ document.querySelectorAll('button[data-action="sign"]').forEach(btn=>{
     const roleLabel = row.getAttribute('data-role');
     document.getElementById('modalTitle').textContent = 'Firma — ' + roleLabel;
     overlay.classList.add('open');
-    setTimeout(()=>{ fitCanvas(); ctx.clearRect(0,0,canvas.width,canvas.height); hasDrawn=false; }, 20);
+    setModoFirma('dibujar');
   });
 });
 
 document.getElementById('cancelSigBtn').addEventListener('click', ()=> overlay.classList.remove('open'));
-document.getElementById('clearSigBtn').addEventListener('click', ()=>{ ctx.clearRect(0,0,canvas.width,canvas.height); hasDrawn=false; });
+document.getElementById('clearSigBtn').addEventListener('click', ()=>{
+  if(modoFirma === 'dibujar'){ ctx.clearRect(0,0,canvas.width,canvas.height); hasDrawn=false; }
+  else { firmaTextoInput.value=''; firmaTextoInput.focus(); }
+});
 
 function showToast(message, success){
   let toast = document.getElementById('toastMsg');
@@ -355,8 +398,15 @@ function showToast(message, success){
 }
 
 document.getElementById('confirmSigBtn').addEventListener('click', async ()=>{
-  if(!hasDrawn){ alert('Dibuja tu firma antes de confirmar.'); return; }
-  const dataUrl = canvas.toDataURL('image/png');
+  let dataUrl;
+  if(modoFirma === 'dibujar'){
+    if(!hasDrawn){ alert('Dibuja tu firma antes de confirmar.'); return; }
+    dataUrl = canvas.toDataURL('image/png');
+  } else {
+    const texto = firmaTextoInput.value.trim();
+    if(!texto){ alert('Escribe tu nombre antes de confirmar.'); return; }
+    dataUrl = generarImagenDeTexto(texto);
+  }
   const timestamp = new Date().toLocaleString('es-CO', {dateStyle:'medium', timeStyle:'medium'});
   const nombre = fieldValue('sig_'+ (activeRole==='estudiante'?'est':activeRole==='tutor'?'tutor':'coord') +'_nombre');
   const basis = `${document.getElementById('actaNum').value}|${fieldValue('est_nombre')}|${activeRole}|${nombre}|${timestamp}`;
