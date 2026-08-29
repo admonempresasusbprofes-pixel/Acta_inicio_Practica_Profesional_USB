@@ -335,6 +335,25 @@ document.querySelectorAll('button[data-action="sign"]').forEach(btn=>{
 document.getElementById('cancelSigBtn').addEventListener('click', ()=> overlay.classList.remove('open'));
 document.getElementById('clearSigBtn').addEventListener('click', ()=>{ ctx.clearRect(0,0,canvas.width,canvas.height); hasDrawn=false; });
 
+function showToast(message, success){
+  let toast = document.getElementById('toastMsg');
+  if(!toast){
+    toast = document.createElement('div');
+    toast.id = 'toastMsg';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = message;
+  toast.style.cssText = `
+    position:fixed; top:18px; left:50%; transform:translateX(-50%);
+    background:${success ? '#2f6f4f' : '#b23a2f'}; color:#fff; padding:14px 26px;
+    border-radius:6px; font-family:'Calibri','Segoe UI',Arial,sans-serif; font-size:14.5px; font-weight:700;
+    box-shadow:0 4px 14px rgba(0,0,0,0.3); z-index:9999; transition:opacity 0.5s ease; opacity:1;
+    max-width:90vw; text-align:center;
+  `;
+  clearTimeout(window._toastTimeout);
+  window._toastTimeout = setTimeout(()=>{ toast.style.opacity = '0'; }, 4000);
+}
+
 document.getElementById('confirmSigBtn').addEventListener('click', async ()=>{
   if(!hasDrawn){ alert('Dibuja tu firma antes de confirmar.'); return; }
   const dataUrl = canvas.toDataURL('image/png');
@@ -349,9 +368,16 @@ document.getElementById('confirmSigBtn').addEventListener('click', async ()=>{
   cell.setAttribute('data-signed', 'true');
   overlay.classList.remove('open');
   updateSignStatus();
+  showToast('Guardando tu firma…', true);
 
   const ok = await guardarFirmaEnSheet(activeRole, dataUrl);
-  cell.querySelector('.sig-code').textContent = ok ? ('Guardado en la hoja · ' + hash.slice(0,16) + '…') : 'No se guardó en la hoja (revisa conexión)';
+  if(ok){
+    cell.querySelector('.sig-code').textContent = '✅ Guardado en la hoja · ' + hash.slice(0,16) + '…';
+    showToast('✅ Firma guardada correctamente en el registro', true);
+  } else {
+    cell.querySelector('.sig-code').textContent = '⚠️ No se guardó en la hoja (revisa conexión)';
+    showToast('⚠️ No se pudo guardar la firma. Revisa tu conexión e inténtalo de nuevo.', false);
+  }
 });
 
 function updateSignStatus(){
@@ -485,30 +511,48 @@ async function cargarPorCodigo(codigo){
     aplicarDatosSheet(data);
     estado.textContent = '✓ Acta cargada: ' + data.NombreCompleto;
     estado.style.color = '#2f6f4f';
+    showToast('✅ Acta cargada correctamente: ' + data.NombreCompleto, true);
   }catch(err){
     estado.textContent = 'No se pudo conectar con la hoja. Revisa tu conexión e intenta de nuevo.';
     estado.style.color = '#9c4b32';
   }
 }
 
+function formatearFecha(valor){
+  if(!valor) return '';
+  // Los valores de fecha que vienen del Sheet llegan como texto ISO completo (con hora);
+  // los inputs type="date" solo aceptan YYYY-MM-DD, así que lo recortamos.
+  const match = String(valor).match(/^(\d{4}-\d{2}-\d{2})/);
+  if(match) return match[1];
+  const d = new Date(valor);
+  if(!isNaN(d.getTime())) return d.toISOString().slice(0,10);
+  return '';
+}
+
 function aplicarDatosSheet(data){
   Object.keys(CAMPO_MAP).forEach(sheetKey=>{
     const el = document.querySelector(`[data-f="${CAMPO_MAP[sheetKey]}"]`);
-    if(el && data[sheetKey] !== undefined) el.value = data[sheetKey];
+    if(el && data[sheetKey] !== undefined){
+      el.value = (el.type === 'date') ? formatearFecha(data[sheetKey]) : data[sheetKey];
+    }
   });
   if(data.ActaNum) document.getElementById('actaNum').value = data.ActaNum;
   currentCodigo = data.Codigo;
 
   const roles = [
-    {id:'estudiante', img:'FirmaEstudianteImg'},
-    {id:'tutor', img:'FirmaTutorImg'},
-    {id:'coordinacion', img:'FirmaCoordImg'}
+    {id:'estudiante', img:'FirmaEstudianteImg', fecha:'FirmaEstudianteFecha', fechaField:'sig_est_fecha'},
+    {id:'tutor', img:'FirmaTutorImg', fecha:'FirmaTutorFecha', fechaField:'sig_tutor_fecha'},
+    {id:'coordinacion', img:'FirmaCoordImg', fecha:'FirmaCoordFecha', fechaField:'sig_coord_fecha'}
   ];
   roles.forEach(r=>{
     if(data[r.img]){
       const cell = document.querySelector(`[data-sigcell="${r.id}"]`);
       cell.innerHTML = `<img src="${data[r.img]}"><div class="sig-code">Firmado ✓</div>`;
       cell.setAttribute('data-signed','true');
+    }
+    if(data[r.fecha]){
+      const fechaEl = document.querySelector(`[data-f="${r.fechaField}"]`);
+      if(fechaEl) fechaEl.value = formatearFecha(data[r.fecha]);
     }
   });
 
@@ -566,6 +610,43 @@ window.addEventListener('DOMContentLoaded', ()=>{
     document.getElementById('codigoInput').value = codigoParam;
     cargarPorCodigo(codigoParam);
   }
+});
+
+// ---------- Autoguardado de correcciones (sin necesidad de firmar) ----------
+let autosaveTimer = null;
+
+function programarAutoguardado(){
+  if(!currentCodigo) return; // sin acta cargada, no hay dónde guardar todavía
+  clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(guardarCamposEnSheet, 900);
+}
+
+async function guardarCamposEnSheet(){
+  if(!currentCodigo) return;
+  const camposActualizados = {};
+  Object.keys(CAMPO_MAP_INVERSO).forEach(dataF=>{
+    if(dataF === 'evidencia' || dataF === 'observaciones') return;
+    const el = document.querySelector(`[data-f="${dataF}"]`);
+    if(el) camposActualizados[CAMPO_MAP_INVERSO[dataF]] = el.value;
+  });
+  try{
+    await fetch(APPS_SCRIPT_URL, {
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({codigo: currentCodigo, fields: camposActualizados})
+    });
+    showToast('✅ Información actualizada', true);
+  }catch(err){
+    showToast('⚠️ No se pudo guardar ese cambio. Revisa tu conexión.', false);
+  }
+}
+
+// Conecta el autoguardado a todos los campos editables del acta (no a los de firma, esos se guardan al firmar)
+document.querySelectorAll('[data-f]').forEach(el=>{
+  const campo = el.getAttribute('data-f');
+  if(campo.startsWith('sig_')) return; // esos van junto con la firma
+  if(campo === 'evidencia' || campo === 'observaciones') return; // siempre bloqueados
+  el.addEventListener('input', programarAutoguardado);
 });
 </script>
 </body>
